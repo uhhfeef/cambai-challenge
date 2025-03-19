@@ -1,138 +1,31 @@
 from typing import Annotated, Dict, List, Optional
 import uuid
+import os
+from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException, status, Body
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
-from pydantic import BaseModel, Field
 from passlib.context import CryptContext
 from jwt.exceptions import InvalidTokenError
 import jwt
 from datetime import datetime, timedelta, timezone
 
+from models import Token, TokenData, APIKey, Tenant, TenantCreate, User, UserInDB, UserCreate, APIKeyCreate
+from database import fake_tenants_db, fake_users_db, fake_api_keys_db
+
+# Load environment variables from .env file
+load_dotenv()
+
 # Security configuration
-SECRET_KEY = "09d25e094faa6ca2556c818166b7a9563b93f7099f6f0f4caa6cf63b88e8d3e7"
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
+SECRET_KEY = os.getenv("SECRET_KEY", "a_default_secret_key_for_development_only")
 
 app = FastAPI(title="Multi-tenant API Key Management System")
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-# Models
-class Token(BaseModel):
-    access_token: str
-    token_type: str
-    
-class TokenData(BaseModel):
-    username: Optional[str] = None
-    tenant_id: Optional[str] = None
 
-class APIKey(BaseModel):
-    key_id: str
-    key_value: str
-    name: str
-    created_at: datetime
-    last_used: Optional[datetime] = None
-
-class Tenant(BaseModel):
-    tenant_id: str
-    name: str
-    description: Optional[str] = None
-    created_at: datetime
-    
-class TenantCreate(BaseModel):
-    name: str
-    description: Optional[str] = None
-
-class User(BaseModel):
-    username: str
-    email: Optional[str] = None
-    full_name: Optional[str] = None
-    disabled: Optional[bool] = None
-    tenant_id: str
-
-class UserInDB(User):
-    hashed_password: str
-
-class UserCreate(BaseModel):
-    username: str
-    password: str
-    email: Optional[str] = None
-    full_name: Optional[str] = None
-    tenant_id: str
-
-class APIKeyCreate(BaseModel):
-    name: str
-
-# Mock databases
-fake_tenants_db: Dict[str, dict] = {
-    "tenant1": {
-        "tenant_id": "tenant1",
-        "name": "Demo Tenant",
-        "description": "A demo tenant for testing",
-        "created_at": datetime.now(timezone.utc),
-    },
-    "tenant2": {
-        "tenant_id": "tenant2",
-        "name": "Another Tenant",
-        "description": "Another tenant for testing",
-        "created_at": datetime.now(timezone.utc),
-    }
-}
-
-fake_users_db: Dict[str, dict] = {
-    "johndoe": {
-        "username": "johndoe",
-        "full_name": "John Doe",
-        "email": "johndoe@example.com",
-        "hashed_password": "$2b$12$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36WQoeG6Lruj3vjPGga31lW",
-        "disabled": False,
-        "tenant_id": "tenant1",
-    },
-    "jane": {
-        "username": "jane",
-        "full_name": "Jane Doe",
-        "email": "jane@example.com",
-        "hashed_password": "$2b$12$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36WQoeG6Lruj3vjPGga31lW",
-        "disabled": False,
-        "tenant_id": "tenant2",
-    },
-    "admin": {
-        "username": "admin",
-        "full_name": "Admin User",
-        "email": "admin@example.com",
-        "hashed_password": "$2b$12$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36WQoeG6Lruj3vjPGga31lW",
-        "disabled": False,
-        "tenant_id": "tenant1",
-    }
-}
-
-fake_api_keys_db: Dict[str, dict] = {
-    "key1": {
-        "key_id": "key1",
-        "key_value": "sk_test_abcdefghijklmnopqrstuvwxyz123456",
-        "name": "Test API Key",
-        "created_at": datetime.now(timezone.utc),
-        "last_used": None,
-        "tenant_id": "tenant1",
-    },
-    "key2": {
-        "key_id": "key2",
-        "key_value": "sk_test_abcdefghijklmnopqrstuvwxyz123456",
-        "name": "Test API Key 2",
-        "created_at": datetime.now(timezone.utc),
-        "last_used": None,
-        "tenant_id": "tenant2",
-    },
-    "key3": {
-        "key_id": "key3",
-        "key_value": "sk_test_abcdefghijklmnopqrstuvwxyz123456",
-        "name": "Test API Key 3",
-        "created_at": datetime.now(timezone.utc),
-        "last_used": None,
-        "tenant_id": "tenant2",
-    }
-}
 
 def get_tenant(tenant_id: str):
     if tenant_id in fake_tenants_db:
@@ -317,7 +210,6 @@ async def create_user(
 # Example protected endpoint that uses tenant isolation
 @app.get("/data", response_model=dict)
 async def get_tenant_data(current_user: Annotated[User, Depends(get_current_active_user)]):
-    # This would fetch data specific to the tenant
     return {
         "tenant_id": current_user.tenant_id,
         "message": f"This is private data for tenant: {current_user.tenant_id}"
