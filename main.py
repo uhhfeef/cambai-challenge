@@ -8,6 +8,8 @@ from passlib.context import CryptContext
 from jwt.exceptions import InvalidTokenError
 import jwt
 from datetime import datetime, timedelta, timezone
+import redis
+import json
 
 from models import Token, TokenData, APIKey, Tenant, TenantCreate, User, UserInDB, UserCreate, APIKeyCreate
 from database import fake_tenants_db, fake_users_db, fake_api_keys_db
@@ -18,13 +20,14 @@ load_dotenv()
 # Security configuration
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
-SECRET_KEY = os.getenv("SECRET_KEY", "a_default_secret_key_for_development_only")
+SECRET_KEY = os.getenv("SECRET_KEY")
 
 app = FastAPI(title="Multi-tenant API Key Management System")
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
+redis_conn = redis.Redis(host="localhost", port=6379, db=0)
 
 
 def get_tenant(tenant_id: str):
@@ -33,15 +36,17 @@ def get_tenant(tenant_id: str):
         return Tenant(**tenant_dict)
     return None
 
-def get_user(db, username: str):
-    if username in db:
-        user_dict = db[username]
+def get_user(redis_conn, username: str):
+    users_data = json.loads(redis_conn.get("fake_users_db"))
+    if username in users_data:
+        user_dict = users_data[username]
         return UserInDB(**user_dict)
     return None
 
 def get_api_keys_for_tenant(tenant_id: str) -> List[APIKey]:
     keys = []
-    for key_id, key_data in fake_api_keys_db.items():
+    api_keys_data = json.loads(redis_conn.get("fake_api_keys_db"))
+    for key_id, key_data in api_keys_data.items():
         if key_data.get("tenant_id") == tenant_id:
             keys.append(APIKey(**{k: v for k, v in key_data.items() if k != "tenant_id"}))
     return keys
@@ -62,8 +67,8 @@ def verify_password(plain_password, hashed_password):
 def get_password_hash(password):
     return pwd_context.hash(password)
 
-def authenticate_user(fake_db, username: str, password: str):
-    user = get_user(fake_db, username)
+def authenticate_user(redis_conn, username: str, password: str):
+    user = get_user(redis_conn, username)
     if not user:
         return False
     if not verify_password(password, user.hashed_password):
@@ -90,7 +95,7 @@ async def get_current_user(token: Annotated[str, Depends(oauth2_scheme)]):
         token_data = TokenData(username=username, tenant_id=tenant_id)
     except InvalidTokenError:
         raise credentials_exception
-    user = get_user(fake_users_db, username=token_data.username)
+    user = get_user(redis_conn, username=token_data.username)
     if user is None:
         raise credentials_exception
     return user
@@ -107,7 +112,7 @@ async def get_current_active_user(
 async def login_for_access_token(
     form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
 ) -> Token:
-    user = authenticate_user(fake_users_db, form_data.username, form_data.password)
+    user = authenticate_user(redis_conn, form_data.username, form_data.password)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -165,49 +170,18 @@ async def create_api_key(
         "key_id": key_id,
         "key_value": key_value,
         "name": key_data.name,
-        "created_at": datetime.now(timezone.utc),
+        "created_at": datetime.now(timezone.utc).isoformat(),
         "last_used": None,
         "tenant_id": current_user.tenant_id
     }
     
-    fake_api_keys_db[key_id] = api_key
-    print("API Keys: ", fake_api_keys_db)
+    api_keys_data = json.loads(redis_conn.get("fake_api_keys_db"))
+    api_keys_data[key_id] = api_key
+    redis_conn.set("fake_api_keys_db", json.dumps(api_keys_data))
     
     # Return without tenant_id in the response
     return APIKey(**{k: v for k, v in api_key.items() if k != "tenant_id"})
 
-# User management endpoints
-@app.post("/users", response_model=User)
-async def create_user(
-    user_data: UserCreate,
-    current_user: Annotated[User, Depends(get_current_active_user)]
-):
-    # Check if the user is creating a user in their own tenant
-    if user_data.tenant_id != current_user.tenant_id:
-        raise HTTPException(
-            status_code=403, 
-            detail="You can only create users in your own tenant"
-        )
-    
-    # Check if username already exists
-    if user_data.username in fake_users_db:
-        raise HTTPException(
-            status_code=400,
-            detail="Username already registered"
-        )
-    
-    # Create the new user
-    hashed_password = get_password_hash(user_data.password)
-    user_dict = user_data.dict()
-    user_dict.pop("password")  # Remove plain password
-    user_dict["hashed_password"] = hashed_password
-    user_dict["disabled"] = False
-    
-    fake_users_db[user_data.username] = user_dict
-    
-    return User(**{k: v for k, v in user_dict.items() if k != "hashed_password"})
-
-# Example protected endpoint that uses tenant isolation
 @app.get("/data", response_model=dict)
 async def get_tenant_data(current_user: Annotated[User, Depends(get_current_active_user)]):
     return {
