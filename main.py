@@ -10,8 +10,8 @@ import jwt
 from datetime import datetime, timedelta, timezone
 import redis
 import json
-
-from models import Token, TokenData, APIKey, Tenant, TenantCreate, User, UserInDB, APIKeyCreate, KeyValueItem
+from models import Token, TokenData, APIKey, Tenant, User, UserInDB, APIKeyCreate, KeyValueItem
+from tasks import audit_log_expiration
 
 # Load environment variables from .env file
 load_dotenv()
@@ -26,18 +26,18 @@ app = FastAPI(title="Multi-tenant API Key Management System")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-redis_conn = redis.Redis(host="localhost", port=6379, db=0)
-
+main_redis = redis.Redis(host="localhost", port=6379, db=0)
+logs_redis = redis.Redis(host="localhost", port=6379, db=1)
 
 def get_tenant(tenant_id: str):
-    tenants_data = json.loads(redis_conn.get("fake_tenants_db"))
+    tenants_data = json.loads(main_redis.get("fake_tenants_db"))
     if tenant_id in tenants_data:
         tenant_dict = tenants_data[tenant_id]
         return Tenant(**tenant_dict)
     return None
 
-def get_user(redis_conn, username: str):
-    users_data = json.loads(redis_conn.get("fake_users_db"))
+def get_user(main_redis, username: str):
+    users_data = json.loads(main_redis.get("fake_users_db"))
     if username in users_data:
         user_dict = users_data[username]
         return UserInDB(**user_dict)
@@ -45,7 +45,7 @@ def get_user(redis_conn, username: str):
 
 def get_api_keys_for_tenant(tenant_id: str) -> List[APIKey]:
     keys = []
-    api_keys_data = json.loads(redis_conn.get("fake_api_keys_db"))
+    api_keys_data = json.loads(main_redis.get("fake_api_keys_db"))
     for key_id, key_data in api_keys_data.items():
         if key_data.get("tenant_id") == tenant_id:
             keys.append(APIKey(**{k: v for k, v in key_data.items() if k != "tenant_id"}))
@@ -67,8 +67,8 @@ def verify_password(plain_password, hashed_password):
 def get_password_hash(password):
     return pwd_context.hash(password)
 
-def authenticate_user(redis_conn, username: str, password: str):
-    user = get_user(redis_conn, username)
+def authenticate_user(main_redis, username: str, password: str):
+    user = get_user(main_redis, username)
     if not user:
         return False
     if not verify_password(password, user.hashed_password):
@@ -95,7 +95,7 @@ async def get_current_user(token: Annotated[str, Depends(oauth2_scheme)]):
         token_data = TokenData(username=username, tenant_id=tenant_id)
     except InvalidTokenError:
         raise credentials_exception
-    user = get_user(redis_conn, username=token_data.username)
+    user = get_user(main_redis, username=token_data.username)
     if user is None:
         raise credentials_exception
     return user
@@ -110,12 +110,14 @@ async def get_current_active_user(
 def get_namespaced_key(tenant_id: str, key: str) -> str:
     return f"{tenant_id}:{key}"
 
+
+
 # API endpoints
 @app.post("/token", response_model=Token)
 async def login_for_access_token(
     form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
 ) -> Token:
-    user = authenticate_user(redis_conn, form_data.username, form_data.password)
+    user = authenticate_user(main_redis, form_data.username, form_data.password)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -164,9 +166,9 @@ async def create_api_key(
         "tenant_id": current_user.tenant_id
     }
     
-    api_keys_data = json.loads(redis_conn.get("fake_api_keys_db"))
+    api_keys_data = json.loads(main_redis.get("fake_api_keys_db"))
     api_keys_data[key_id] = api_key
-    redis_conn.set("fake_api_keys_db", json.dumps(api_keys_data))
+    main_redis.set("fake_api_keys_db", json.dumps(api_keys_data))
     
     # Return without tenant_id in the response
     return APIKey(**{k: v for k, v in api_key.items() if k != "tenant_id"})
@@ -179,20 +181,24 @@ async def create_api_key(
 #     }
 
 @app.post("/data")
-def create_item(item: KeyValueItem, user=Depends(get_current_active_user)):
+def create_item(item: KeyValueItem, key: str, user=Depends(get_current_active_user)):
     tenant_id = user.tenant_id
-    namespaced_key = get_namespaced_key(tenant_id, item.key)
+    namespaced_key = get_namespaced_key(tenant_id, key)
     
-    if redis_conn.exists(namespaced_key):
+    if main_redis.exists(namespaced_key):
         raise HTTPException(status_code=400, detail="Key already exists")
     
     # Save the full data (value and metadata) as JSON
     data = item.model_dump()
-    redis_conn.set(namespaced_key, json.dumps(data))
+    main_redis.set(namespaced_key, json.dumps(data))
     
     # Set TTL if provided
     if item.ttl:
-        redis_conn.expire(namespaced_key, item.ttl)
+        main_redis.expire(namespaced_key, item.ttl)
+        
+        # schedule expiration in Huey
+        audit_log_expiration.schedule(args=(key, tenant_id, main_redis), delay=item.ttl)
+
     
     return {"message": "Key created", "data": data}
 
@@ -201,10 +207,10 @@ def get_item(key: str, user=Depends(get_current_active_user)):
     tenant_id = user.tenant_id
     namespaced_key = get_namespaced_key(tenant_id, key)
     print(namespaced_key)
-    if not redis_conn.exists(namespaced_key):
+    if not main_redis.exists(namespaced_key):
         raise HTTPException(status_code=404, detail="Key not found")
     
-    data = json.loads(redis_conn.get(namespaced_key))
+    data = json.loads(main_redis.get(namespaced_key))
     return data
 
 @app.put("/data", response_model=KeyValueItem)
@@ -212,14 +218,14 @@ def update_item(key: str, item: KeyValueItem, user=Depends(get_current_active_us
     tenant_id = user.tenant_id
     namespaced_key = get_namespaced_key(tenant_id, key)
     
-    if not redis_conn.exists(namespaced_key):
+    if not main_redis.exists(namespaced_key):
         raise HTTPException(status_code=404, detail="Key not found")
     
     data = item.model_dump()
-    redis_conn.set(namespaced_key, json.dumps(data))
+    main_redis.set(namespaced_key, json.dumps(data))
     
     if item.ttl:
-        redis_conn.expire(namespaced_key, item.ttl)
+        main_redis.expire(namespaced_key, item.ttl)
     
     return data
 
@@ -228,8 +234,8 @@ def delete_item(key: str, user=Depends(get_current_active_user)):
     tenant_id = user.tenant_id
     namespaced_key = get_namespaced_key(tenant_id, key)
     
-    if not redis_conn.exists(namespaced_key):
+    if not main_redis.exists(namespaced_key):
         raise HTTPException(status_code=404, detail="Key not found")
     
-    redis_conn.delete(namespaced_key)
+    main_redis.delete(namespaced_key)
     return {"message": "Key deleted"}
