@@ -129,6 +129,16 @@ async def login_for_access_token(
         data={"sub": user.username, "tenant_id": user.tenant_id}, 
         expires_delta=access_token_expires
     )
+    
+    # Log the login attempt
+    logs_entry = json.dumps({
+        "timestamp": datetime.now().isoformat(),
+        "action": "login",
+        "tenant_id": user.tenant_id,
+        "username": user.username,
+    })
+    logs_redis.lpush("logs:audit", logs_entry)
+    
     return Token(access_token=access_token, token_type="bearer")
 
 @app.get("/users/me", response_model=User)
@@ -150,10 +160,7 @@ async def list_api_keys(current_user: Annotated[User, Depends(get_current_active
     return get_api_keys_for_tenant(current_user.tenant_id)
 
 @app.post("/api-keys", response_model=APIKey)
-async def create_api_key(
-    key_data: APIKeyCreate,
-    current_user: Annotated[User, Depends(get_current_active_user)]
-):
+async def create_api_key(key_data: APIKeyCreate, current_user: Annotated[User, Depends(get_current_active_user)]):
     key_id = f"key_{uuid.uuid4().hex[:8]}"
     key_value = generate_api_key()
     
@@ -170,15 +177,19 @@ async def create_api_key(
     api_keys_data[key_id] = api_key
     main_redis.set("fake_api_keys_db", json.dumps(api_keys_data))
     
+    # Log the API key creation
+    logs_entry = json.dumps({
+        "timestamp": datetime.now().isoformat(),
+        "action": "create_api_key",
+        "name": key_data.name,
+        "tenant_id": current_user.tenant_id,
+        "username": current_user.username,
+    })
+    logs_redis.lpush("logs:audit", logs_entry)
+    
     # Return without tenant_id in the response
     return APIKey(**{k: v for k, v in api_key.items() if k != "tenant_id"})
 
-# @app.get("/data", response_model=dict)
-# async def get_tenant_data(current_user: Annotated[User, Depends(get_current_active_user)]):
-#     return {
-#         "tenant_id": current_user.tenant_id,
-#         "message": f"This is private data for tenant: {current_user.tenant_id}"
-#     }
 
 @app.post("/data")
 def create_item(item: KeyValueItem, key: str, user=Depends(get_current_active_user)):
@@ -197,8 +208,20 @@ def create_item(item: KeyValueItem, key: str, user=Depends(get_current_active_us
         main_redis.expire(namespaced_key, item.ttl)
         
         # schedule expiration in Huey
-        audit_log_expiration.schedule(args=(key, tenant_id, main_redis), delay=item.ttl)
+        audit_log_expiration.schedule(args=(key, tenant_id), delay=item.ttl)
 
+    # Log the key creation
+    logs_entry = json.dumps({
+        "timestamp": datetime.now().isoformat(),
+        "action": "create_key",
+        "key": key,
+        "value": item.value,
+        "ttl": item.ttl,
+        "version": item.version,
+        "tags": item.tags,
+        "tenant_id": tenant_id,
+    })
+    logs_redis.lpush("logs:audit", logs_entry)
     
     return {"message": "Key created", "data": data}
 
@@ -226,6 +249,22 @@ def update_item(key: str, item: KeyValueItem, user=Depends(get_current_active_us
     
     if item.ttl:
         main_redis.expire(namespaced_key, item.ttl)
+        
+        # schedule expiration in Huey
+        audit_log_expiration.schedule(args=(key, tenant_id), delay=item.ttl)
+    
+    # Log the key update
+    logs_entry = json.dumps({
+        "timestamp": datetime.now().isoformat(),
+        "action": "update_key",
+        "key": key,
+        "value": item.value,
+        "ttl": item.ttl,
+        "version": item.version,
+        "tags": item.tags,
+        "tenant_id": tenant_id,
+    })
+    logs_redis.lpush("logs:audit", logs_entry)
     
     return data
 
@@ -238,4 +277,14 @@ def delete_item(key: str, user=Depends(get_current_active_user)):
         raise HTTPException(status_code=404, detail="Key not found")
     
     main_redis.delete(namespaced_key)
+    
+    # Log the key deletion
+    logs_entry = json.dumps({
+        "timestamp": datetime.now().isoformat(),
+        "action": "delete_key",
+        "key": key,
+        "tenant_id": tenant_id,
+    })
+    logs_redis.lpush("logs:audit", logs_entry)
+    
     return {"message": "Key deleted"}
