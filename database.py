@@ -1,5 +1,7 @@
 from typing import Dict
 from datetime import datetime, timezone
+import redis
+import json
 
 # Mock databases
 fake_tenants_db: Dict[str, dict] = {
@@ -7,13 +9,13 @@ fake_tenants_db: Dict[str, dict] = {
         "tenant_id": "tenant1",
         "name": "Demo Tenant",
         "description": "A demo tenant for testing",
-        "created_at": datetime.now(timezone.utc),
+        "created_at": datetime.now(timezone.utc).isoformat(),
     },
     "tenant2": {
         "tenant_id": "tenant2",
         "name": "Another Tenant",
         "description": "Another tenant for testing",
-        "created_at": datetime.now(timezone.utc),
+        "created_at": datetime.now(timezone.utc).isoformat(),
     }
 }
 
@@ -49,7 +51,7 @@ fake_api_keys_db: Dict[str, dict] = {
         "key_id": "key1",
         "key_value": "sk_test_abcdefghijklmnopqrstuvwxyz123456",
         "name": "Test API Key",
-        "created_at": datetime.now(timezone.utc),
+        "created_at": datetime.now(timezone.utc).isoformat(),
         "last_used": None,
         "tenant_id": "tenant1",
     },
@@ -57,7 +59,7 @@ fake_api_keys_db: Dict[str, dict] = {
         "key_id": "key2",
         "key_value": "sk_test_abcdefghijklmnopqrstuvwxyz123456",
         "name": "Test API Key 2",
-        "created_at": datetime.now(timezone.utc),
+        "created_at": datetime.now(timezone.utc).isoformat(),
         "last_used": None,
         "tenant_id": "tenant2",
     },
@@ -65,8 +67,16 @@ fake_api_keys_db: Dict[str, dict] = {
         "key_id": "key3",
         "key_value": "sk_test_abcdefghijklmnopqrstuvwxyz123456",
         "name": "Test API Key 3",
-        "created_at": datetime.now(timezone.utc),
+        "created_at": datetime.now(timezone.utc).isoformat(),
         "last_used": None,
         "tenant_id": "tenant2",
     }
 }
+
+# r = redis.Redis(host="localhost", port=6379, db=0)
+# r.set("fake_tenants_db", json.dumps(fake_tenants_db))
+# r.set("fake_users_db", json.dumps(fake_users_db))
+# r.set("fake_api_keys_db", json.dumps(fake_api_keys_db))
+
+# stored_dict = json.loads(r.get("fake_users_db"))
+# print(stored_dict)
