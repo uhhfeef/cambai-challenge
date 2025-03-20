@@ -2,6 +2,7 @@ from typing import Dict
 from datetime import datetime, timezone
 import redis
 import json
+import os
 
 # Mock databases
 fake_tenants_db: Dict[str, dict] = {
@@ -73,10 +74,18 @@ fake_api_keys_db: Dict[str, dict] = {
     }
 }
 
-# r = redis.Redis(host="localhost", port=6379, db=0)
-# r.set("fake_tenants_db", json.dumps(fake_tenants_db))
-# r.set("fake_users_db", json.dumps(fake_users_db))
-# r.set("fake_api_keys_db", json.dumps(fake_api_keys_db))
-
-# stored_dict = json.loads(r.get("fake_users_db"))
-# print(stored_dict)
+def init_redis_db():
+    # Create Redis connection
+    r = redis.Redis(host='redis', port=6379, db=0, decode_responses=True)
+    
+    # Only initialize if data doesn't exist
+    if not r.exists("fake_tenants_db"):
+        print("Initializing Redis with default data...")
+        r.set("fake_tenants_db", json.dumps(fake_tenants_db))
+        r.set("fake_users_db", json.dumps(fake_users_db))
+        r.set("fake_api_keys_db", json.dumps(fake_api_keys_db))
+        print("Redis database initialized successfully")
+    else:
+        print("Redis database already exists, skipping initialization")
+    
+    return r
