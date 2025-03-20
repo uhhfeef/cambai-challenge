@@ -23,11 +23,18 @@ SECRET_KEY = os.getenv("SECRET_KEY")
 
 app = FastAPI(title="Multi-tenant API Key Management System")
 
+@app.on_event("startup")
+async def startup_event():
+    # Initialize the Redis database
+    from database import init_redis_db
+    init_redis_db()
+
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-main_redis = redis.Redis(host="localhost", port=6379, db=0)
-logs_redis = redis.Redis(host="localhost", port=6379, db=1)
+# Create Redis connections
+main_redis = redis.Redis(host='redis', port=6379, db=0, decode_responses=True)
+logs_redis = redis.Redis(host='redis', port=6379, db=1, decode_responses=True)
 
 def get_tenant(tenant_id: str):
     tenants_data = json.loads(main_redis.get("fake_tenants_db"))
