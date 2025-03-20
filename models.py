@@ -1,6 +1,7 @@
 from typing import Optional, Dict
 from datetime import datetime
 from pydantic import BaseModel
+from typing import List
 
 class Token(BaseModel):
     access_token: str
@@ -46,3 +47,9 @@ class UserCreate(BaseModel):
 
 class APIKeyCreate(BaseModel):
     name: str
+
+class KeyValueItem(BaseModel):
+    value: str
+    ttl: Optional[int] = None          
+    version: Optional[int] = None      
+    tags: Optional[List[str]] = None   
