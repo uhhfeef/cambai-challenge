@@ -89,7 +89,7 @@ This project implements a secure, scalable API key management system with the fo
 
 ### System Diagram
 
-![Architecture Diagram](diagram.png)
+![Architecture Diagram](images/diagram.png)
 
 ### Request Flow
 
