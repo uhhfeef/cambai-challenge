@@ -14,6 +14,10 @@ This project implements a secure, scalable API key management system with the fo
 
 ## Architecture
 
+### System Diagram
+
+![Architecture Diagram](diagram.png)
+
 ### Components
 
 1. **FastAPI Application**: Core REST API service with multi-tenant support
