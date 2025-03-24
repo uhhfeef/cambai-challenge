@@ -1,0 +1,96 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: sentinel
+spec:
+  serviceName: sentinel
+  replicas: 3
+  selector:
+    matchLabels:
+      app: sentinel
+  template:
+    metadata:
+      labels:
+        app: sentinel
+    spec:
+      initContainers:
+      - name: config
+        image: redis:7.0.10-alpine
+        command: ["sh", "-c"]
+        args:
+        - |
+          # Set password
+          #REDIS_PASSWORD="P@ssw0rd_2025!Kx9#zT$7qL*mN"
+          
+          # Try to find the current master
+          MASTER=""
+          for pod in redis-0.redis-headless redis-1.redis-headless redis-2.redis-headless; do
+            echo "Checking if $pod is master..."
+            if redis-cli -h $pod info | grep -q "role:master"; then
+              echo "Found master at $pod"
+              MASTER="$pod"
+              break
+            fi
+          done
+          
+          # If no master found, default to redis-0
+          if [ -z "$MASTER" ]; then
+            echo "No master found, defaulting to redis-0.redis-headless"
+            MASTER="redis-0.redis-headless"
+          fi
+          
+          # Create sentinel config
+          cat > /etc/redis/sentinel.conf << EOF
+          port 26379
+          sentinel resolve-hostnames yes
+          sentinel announce-hostnames yes
+          sentinel monitor mymaster $MASTER 6379 2
+          sentinel down-after-milliseconds mymaster 5000
+          sentinel failover-timeout mymaster 60000
+          sentinel parallel-syncs mymaster 1
+          # sentinel auth-pass mymaster $REDIS_PASSWORD
+          EOF
+          
+          echo "Sentinel configuration:"
+          cat /etc/redis/sentinel.conf
+        volumeMounts:
+        - name: redis-config
+          mountPath: /etc/redis/
+      containers:
+      - name: sentinel
+        image: redis:7.0.10-alpine
+        command: ["redis-sentinel"]
+        args: ["/etc/redis/sentinel.conf"]
+        ports:
+        - containerPort: 26379
+          name: sentinel
+        volumeMounts:
+        - name: redis-config
+          mountPath: /etc/redis/
+        - name: data
+          mountPath: /data
+      volumes:
+      - name: redis-config
+        emptyDir: {}
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      storageClassName: "standard"
+      resources:
+        requests:
+          storage: 64Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: sentinel
+spec:
+  clusterIP: None
+  ports:
+  - port: 26379
+    targetPort: 26379
+    name: sentinel
+  selector:
+    app: sentinel

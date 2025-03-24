@@ -1,0 +1,119 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis
+spec:
+  serviceName: redis-headless
+  replicas: 3
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      initContainers:
+      - name: config
+        image: redis:7.0.10-alpine
+        command: [ "sh", "-c" ]
+        args:
+          - |
+            cp /tmp/redis/redis.conf /etc/redis/redis.conf
+            
+            # Get pod name
+            HOSTNAME=$(hostname)
+            POD_INDEX=${HOSTNAME##*-}
+            
+            # Only redis-0 is initially master, others are replicas
+            if [ "$POD_INDEX" = "0" ]; then
+              echo "This is redis-0, configuring as initial master"
+              # No replicaof directive for the master
+            else
+              echo "This is replica $POD_INDEX, configuring as replica of redis-0"
+              echo "replicaof redis-0.redis-headless 6379" >> /etc/redis/redis.conf
+            fi
+            
+            # Set replica priority based on index (lower number = higher priority)
+            # redis-1 has priority 100, redis-2 has 101, etc.
+            REPLICA_PRIORITY=$((100 + $POD_INDEX))
+            echo "replica-priority $REPLICA_PRIORITY" >> /etc/redis/redis.conf
+            
+            echo "Final Redis configuration:"
+            cat /etc/redis/redis.conf
+        volumeMounts:
+        - name: redis-config
+          mountPath: /etc/redis/
+        - name: config
+          mountPath: /tmp/redis/
+      containers:
+      - name: redis
+        image: redis:7.0.10-alpine
+        command: ["redis-server"]
+        args: ["/etc/redis/redis.conf"]
+        ports:
+        - containerPort: 6379
+          name: redis
+        volumeMounts:
+        - name: data
+          mountPath: /data
+        - name: redis-config
+          mountPath: /etc/redis/
+        livenessProbe:
+          exec:
+            command:
+            - sh
+            - -c
+            - redis-cli -a P@ssw0rd_2025!Kx9#zT$7qL*mN --no-auth-warning ping
+          initialDelaySeconds: 15
+          periodSeconds: 5
+        readinessProbe:
+          exec:
+            command:
+            - sh
+            - -c
+            - redis-cli -a P@ssw0rd_2025!Kx9#zT$7qL*mN --no-auth-warning ping
+          initialDelaySeconds: 5
+          periodSeconds: 2
+      volumes:
+      - name: redis-config
+        emptyDir: {}
+      - name: config
+        configMap:
+          name: redis-config
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      storageClassName: "standard"
+      resources:
+        requests:
+          storage: 1Gi
+---
+# Headless service for StatefulSet DNS resolution
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-headless
+spec:
+  clusterIP: None
+  ports:
+  - port: 6379
+    targetPort: 6379
+    name: redis
+  selector:
+    app: redis
+---
+# Regular service for application access
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-service
+spec:
+  ports:
+  - port: 6379
+    targetPort: 6379
+    name: redis
+  selector:
+    app: redis

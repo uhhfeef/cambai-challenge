@@ -1,0 +1,26 @@
+---
+# Loki Headless Service for StatefulSet
+apiVersion: v1
+kind: Service
+metadata:
+  name: loki-headless
+spec:
+  selector:
+    app: loki
+  ports:
+  - port: 3100
+    targetPort: 3100
+  clusterIP: None
+---
+# Loki Gateway Service for application access
+apiVersion: v1
+kind: Service
+metadata:
+  name: loki-gateway
+spec:
+  selector:
+    app: loki
+  ports:
+  - protocol: TCP
+    port: 80
+    targetPort: 3100
