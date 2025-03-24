@@ -164,9 +164,9 @@ In addition to JWT authentication, the system supports API key-based authenticat
    - Currently, manual scaling can be performed using `kubectl scale deployment fastapi-app --replicas=<count>`
    - The application can be scaled independently from the background workers
 
-2. **Efficient Redis Connection Pool**:
-   - Connection pooling is used to minimize the overhead of establishing new Redis connections
+2. **Efficient Redis Connection Strategy**:
    - The custom Redis connection strategy ensures optimal use of the Redis cluster
+   - Direct pod connections minimize network hops and ensure write operations target the master
 
 3. **Background Processing**:
    - CPU-intensive and I/O-bound operations are offloaded to background tasks
