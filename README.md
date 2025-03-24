@@ -12,11 +12,104 @@ This project implements a secure, scalable API key management system with the fo
 - **Kubernetes Deployment**: Complete K8s configuration for all components
 - **Horizontal Scaling**: Support for scaling API instances based on load
 
+## Setup & Deployment Instructions
+
+### Local Development Setup
+
+1. **Clone the repository and set up virtual environment**
+   ```bash
+   git clone <repository-url>
+   cd cambai-challenge
+   python -m venv venv
+   source venv/bin/activate  # On Windows: venv\Scripts\activate
+   ```
+
+2. **Install dependencies**
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+3. **Start a local Redis instance**
+   ```bash
+   redis-server
+   ```
+
+4. **Run the FastAPI application**
+   ```bash
+   uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+   ```
+
+### Kubernetes Deployment
+
+1. **Start Minikube (for local Kubernetes)**
+   ```bash
+   minikube start
+   ```
+
+2. **Configure terminal to use Minikube's Docker daemon**
+   ```bash
+   eval $(minikube docker-env)
+   ```
+
+3. **Build the Docker image**
+   ```bash
+   docker build -t uhhfeef/fastapi-app:latest .
+   ```
+
+4. **Deploy Redis and Sentinel**
+   ```bash
+   kubectl apply -f k8s/redis/redis-configmap.yaml
+   kubectl apply -f k8s/redis/redis-statefulset.yaml
+   kubectl apply -f k8s/redis/sentinel-statefulset.yaml
+   ```
+
+5. **Deploy Loki and Grafana**
+   ```bash
+   kubectl apply -f k8s/loki/loki-config.yaml
+   kubectl apply -f k8s/loki/loki-deployment.yaml
+   kubectl apply -f k8s/loki/loki-services.yaml
+   kubectl apply -f k8s/grafana/grafana-config.yaml
+   kubectl apply -f k8s/grafana/grafana-deployment.yaml
+   kubectl apply -f k8s/grafana/grafana-service.yaml
+   ```
+
+6. **Deploy FastAPI and Huey worker**
+   ```bash
+   kubectl apply -f k8s/fastapi/fastapi-deployment.yaml
+   kubectl apply -f k8s/fastapi/fastapi-service.yaml
+   kubectl apply -f k8s/fastapi/huey-deployment.yaml
+   ```
+
+7. **Access the application**
+   ```bash
+   minikube service fastapi-service
+   ```
+
 ## Architecture
 
 ### System Diagram
 
 ![Architecture Diagram](diagram.png)
+
+### Request Flow
+
+The system architecture follows these key flows:
+
+1. **API Requests**: Client requests are received by the FastAPI application, which handles authentication, request validation, and routing.
+
+2. **Data Storage**: The FastAPI application interacts with Redis for all data operations:
+   - Redis is configured in a master-replica setup (3 nodes) for high availability
+   - Redis Sentinel monitors the Redis nodes and handles automatic failover
+   - A custom connection strategy ensures write operations always target the Redis master
+
+3. **Background Processing**: 
+   - Huey task queue handles asynchronous operations like log offloading
+   - Background tasks run on a separate worker deployment for better resource isolation
+
+4. **Logging Pipeline**:
+   - All operations generate audit logs stored temporarily in Redis
+   - Logs are periodically offloaded to Loki by Huey background tasks
+   - Grafana provides visualization of logs and metrics
 
 ### Components
 
@@ -27,6 +120,72 @@ This project implements a secure, scalable API key management system with the fo
 5. **Loki**: Log aggregation system with multi-tenant support
 6. **Grafana**: Visualization for logs and metrics
 7. **Prometheus**: Metrics collection and alerting
+
+## Authentication Workflow
+
+### JWT Token Generation and Validation
+
+1. **Token Generation**:
+   - Users authenticate via the `/token` endpoint using username/password credentials
+   - The system verifies credentials against the Redis database
+   - Upon successful authentication, a JWT token is generated containing:
+     - User identifier (`sub` claim)
+     - Tenant ID (`tenant_id` claim)
+     - Expiration time (`exp` claim)
+   - The token is signed using HMAC-SHA256 (HS256) with a secret key
+
+2. **Token Validation**:
+   - All protected endpoints use OAuth2 password bearer authentication
+   - The JWT token is extracted from the Authorization header
+   - The system verifies the token signature and checks for expiration
+   - User information is retrieved from Redis based on the username in the token
+
+3. **Multi-tenant Data Access**:
+   - The tenant ID from the JWT token is used to scope all data access
+   - All data keys are namespaced with the tenant ID (e.g., `tenant:{tenant_id}:data:{key}`)
+   - This ensures complete data isolation between tenants
+
+### API Key Authentication
+
+In addition to JWT authentication, the system supports API key-based authentication:
+
+- API keys are created and managed through the `/api-keys` endpoints
+- Each API key is associated with a specific tenant
+- API keys are stored securely in Redis with proper hashing
+
+## Scalability Discussion
+
+### High Throughput Handling
+
+1. **Horizontal Scaling**:
+   - The FastAPI application is designed to be stateless, allowing for easy horizontal scaling
+   - While an HPA configuration file exists in the repository, it hasn't been implemented yet due to time constraints
+   - Future work would include implementing the Horizontal Pod Autoscaler to automatically scale pods based on CPU utilization (3-10 replicas targeting 80% CPU)
+   - Currently, manual scaling can be performed using `kubectl scale deployment fastapi-app --replicas=<count>`
+   - The application can be scaled independently from the background workers
+
+2. **Efficient Redis Connection Pool**:
+   - Connection pooling is used to minimize the overhead of establishing new Redis connections
+   - The custom Redis connection strategy ensures optimal use of the Redis cluster
+
+3. **Background Processing**:
+   - CPU-intensive and I/O-bound operations are offloaded to background tasks
+   - Log processing is handled asynchronously to prevent blocking API requests
+
+### Potential Bottlenecks
+
+1. **Redis Master-Replica Setup**:
+   - While Redis provides high performance, having a single master node can become a bottleneck
+   - Potential solution: Implement Redis Cluster for sharding across multiple master nodes
+
+2. **Log Processing**:
+   - High volume of operations can generate a large number of logs
+   - Current solution: Batch processing of logs and periodic offloading
+   - Future improvement: Implement log streaming for real-time processing
+
+3. **Authentication Overhead**:
+   - JWT validation on every request adds some overhead
+   - Potential optimization: Implement token caching or session-based authentication for high-frequency API consumers
 
 ### Key Features
 
