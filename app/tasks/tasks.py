@@ -3,11 +3,8 @@ from huey import crontab
 # from main import get_namespaced_key
 import json
 from datetime import datetime
-import redis
 import requests
 import os
-
-# Import the Redis client creation function from app.db.redis_utils
 from app.db.redis_utils import create_redis_client
 
 # Find a writable Redis instance for Huey
@@ -24,10 +21,6 @@ LOKI_URL = f'http://{LOKI_HOST}:{LOKI_PORT}/loki/api/v1/push'
 
 @huey.task()
 def audit_log_expiration(key: str, tenant_id: str):
-    import redis
-    
-    # Create Redis connections
-    
     # Log the key expiration
     logs_entry = json.dumps({
         "timestamp": datetime.now().isoformat(),
@@ -40,39 +33,15 @@ def audit_log_expiration(key: str, tenant_id: str):
     print(f"Audit Log: Key '{tenant_id}:{key}' has expired.")
 
 # Huey background task for audit log offloading to Loki
-@huey.periodic_task(crontab(minute='*/5'))
+@huey.periodic_task(crontab(minute='*/1'))
 def offload_audit_logs_to_loki():
     print("\n" + "*"*50)
     print("Starting log offloading to Loki...")
     print(f"Loki URL: {LOKI_URL}")
     
-    # Check if we can connect to Loki
-    try:
-        # Get all tenant IDs from Redis to check Loki connectivity for each
-        tenants_db_json = logs_redis.get("fake_tenants_db")
-        if tenants_db_json:
-            tenants_db = json.loads(tenants_db_json)
-            tenant_ids = [tenant['id'] for tenant in tenants_db.values()]
-        else:
-            # Fallback to default tenants if Redis data not available
-            tenant_ids = ["tenant1", "tenant2"]
-            
-        # Try first tenant for health check
-        first_tenant = tenant_ids[0] if tenant_ids else "tenant1"
-        health_check = requests.get(
-            f'http://{LOKI_HOST}:{LOKI_PORT}/loki/api/v1/labels', 
-            headers={"X-Scope-OrgID": first_tenant}, 
-            timeout=5
-        )
-        print(f"Loki health check for tenant {first_tenant}: {health_check.status_code} - {health_check.text[:100]}")
-    except Exception as e:
-        print(f"Loki health check failed: {str(e)}")
-    
-    # First, let's check if there are any logs in Redis
     logs_count = logs_redis.llen('logs:audit')
     print(f"Found {logs_count} logs in Redis queue")
     
-    # Now retrieve the logs
     logs = []
     while True:
         log_data = logs_redis.rpop('logs:audit')
@@ -151,7 +120,7 @@ def offload_audit_logs_to_loki():
                     json=loki_payload,
                     headers={
                         "Content-Type": "application/json",
-                        "X-Scope-OrgID": tenant_id  # Use actual tenant_id for proper multi-tenancy
+                        "X-Scope-OrgID": tenant_id  
                     },
                     timeout=10
                 )

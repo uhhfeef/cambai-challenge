@@ -3,7 +3,7 @@
 #!/bin/bash
 
 # Use the minikube service URL
-SERVICE_URL="http://127.0.0.1:61389"
+SERVICE_URL="http://127.0.0.1:54120"
 echo "Service URL: $SERVICE_URL"
 
 # Check if we have a token
@@ -20,17 +20,17 @@ echo "Creating a test item..."
 curl -X POST "$SERVICE_URL/data?key=test-key" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"value":"test-value","ttl":null,"version":1,"tags":["test"]}'
+  -d '{"value":"test-value","ttl":null,"metadata":{"test":"test"}}'
 
 # Run load test for reads
 echo "Starting load test for reads..."
-hey -n 10000 -c 100 -H "Authorization: Bearer $TOKEN" "$SERVICE_URL/data?key=test-key"
+hey -n 10000 -c 100 -H "Authorization: Bearer $TOKEN" "$SERVICE_URL/data/test-key"
 
 # Run load test for writes
 echo "Starting load test for writes..."
 hey -n 10000 -c 100 -m PUT -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"value":"updated-value","ttl":null,"version":2,"tags":["test"]}' \
-  "$SERVICE_URL/data?key=test-key"
+  -d '{"value":"updated-value","ttl":null,"metadata":{"test":"test"}}' \
+  "$SERVICE_URL/data/test-key"
 
 echo "Load test completed!"

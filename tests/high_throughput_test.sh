@@ -3,7 +3,7 @@
 #!/bin/bash
 
 # Use the minikube service URL
-SERVICE_URL="http://127.0.0.1:64767"
+SERVICE_URL="http://127.0.0.1:54120"
 echo "Service URL: $SERVICE_URL"
 
 # Check if we have a token
@@ -20,7 +20,7 @@ echo "Creating a test item..."
 curl -X POST "$SERVICE_URL/data?key=test-key" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"value":"test-value","ttl":null,"version":1,"tags":["test"]}'
+  -d '{"value":"test-value","ttl":null,"metadata":{"test":"test"}}'
 
 echo ""
 
@@ -30,7 +30,7 @@ echo "STARTING HIGH THROUGHPUT TEST (10K READS)"
 echo "======================================================="
 
 # Run a high throughput read test with 10,000 requests and 200 concurrent connections
-hey -n 10000 -c 200 -H "Authorization: Bearer $TOKEN" "$SERVICE_URL/data?key=test-key"
+hey -n 10000 -c 200 -H "Authorization: Bearer $TOKEN" "$SERVICE_URL/data/test-key"
 
 echo ""
 echo "======================================================="
@@ -40,8 +40,8 @@ echo "======================================================="
 # Run a high throughput write test with 10,000 requests and 200 concurrent connections
 hey -n 10000 -c 200 -m PUT -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"value":"updated-value","ttl":null,"version":2,"tags":["test"]}' \
-  "$SERVICE_URL/data?key=test-key"
+  -d '{"value":"updated-value","ttl":null,"metadata":{"test":"test"}}' \
+  "$SERVICE_URL/data/test-key"
 
 echo ""
 echo "High throughput test completed!"

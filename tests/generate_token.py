@@ -2,11 +2,11 @@ import requests
 import json
 
 # URL for the token endpoint
-url = "http://localhost:8080/token"  # Using kubectl port-forwarded URL
+url = "http://localhost:54120/token"  # Using kubectl port-forwarded URL
 
 # Credentials for authentication
 data = {
-    "username": "johndoe",
+    "username": "user1",
     "password": "secret"
 }
 
