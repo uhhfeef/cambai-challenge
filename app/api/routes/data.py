@@ -7,6 +7,7 @@ from app.core.security import get_current_active_user
 from app.models.data import KeyValueItem
 from app.db.redis import main_redis, logs_redis, get_namespaced_key
 from app.db.redis_utils import create_redis_client
+from app.tasks.tasks import audit_log_expiration
 
 router = APIRouter()
 
@@ -20,7 +21,7 @@ def create_item(item: KeyValueItem, key: str, user=Depends(get_current_active_us
     if main_redis.exists(namespaced_key):
         raise HTTPException(status_code=400, detail="Key already exists")
     
-    # Create a fresh Redis client for write operations to ensure we connect to the master
+    # Create a fresh Redis client 
     redis_client = create_redis_client()
     
     # Save the full data (value and metadata) as JSON
@@ -30,6 +31,8 @@ def create_item(item: KeyValueItem, key: str, user=Depends(get_current_active_us
     # Set TTL if provided
     if item.ttl:
         redis_client.expire(namespaced_key, item.ttl)
+        # Schedule audit log task for when the key expires
+        audit_log_expiration.schedule(args=(key, tenant_id), delay=item.ttl)
     
     # Log the key creation
     logs_entry = json.dumps({
@@ -42,7 +45,7 @@ def create_item(item: KeyValueItem, key: str, user=Depends(get_current_active_us
         "tenant_id": tenant_id,
     })
     
-    # Create a fresh Redis client for logs to ensure we connect to the master
+    # Create a fresh Redis client for logs
     logs_client = create_redis_client(db=1)
     logs_client.lpush("logs:audit", logs_entry)
     
@@ -67,7 +70,7 @@ def get_item(key: str, user=Depends(get_current_active_user)):
         "tenant_id": tenant_id,
     })
     
-    # Create a fresh Redis client for logs to ensure we connect to the master
+    # Create a fresh Redis client for logs
     logs_client = create_redis_client(db=1)
     logs_client.lpush("logs:audit", logs_entry)
     
@@ -81,7 +84,7 @@ def update_item(key: str, item: KeyValueItem, user=Depends(get_current_active_us
     if not main_redis.exists(namespaced_key):
         raise HTTPException(status_code=404, detail="Key not found")
     
-    # Create a fresh Redis client for write operations to ensure we connect to the master
+    # Create a fresh Redis client for write operations
     redis_client = create_redis_client()
     
     # Save the full data (value and metadata) as JSON
@@ -91,6 +94,8 @@ def update_item(key: str, item: KeyValueItem, user=Depends(get_current_active_us
     # Set or update TTL if provided
     if item.ttl:
         redis_client.expire(namespaced_key, item.ttl)
+        # Schedule audit log task for when the key expires
+        audit_log_expiration.schedule(args=(key, tenant_id), delay=item.ttl)
     
     # Log the key update
     logs_entry = json.dumps({
@@ -103,7 +108,7 @@ def update_item(key: str, item: KeyValueItem, user=Depends(get_current_active_us
         "tenant_id": tenant_id,
     })
     
-    # Create a fresh Redis client for logs to ensure we connect to the master
+    # Create a fresh Redis client for logs
     logs_client = create_redis_client(db=1)
     logs_client.lpush("logs:audit", logs_entry)
     
@@ -120,7 +125,7 @@ def delete_item(key: str, user=Depends(get_current_active_user)):
     # Get the data before deleting for logging
     data = json.loads(main_redis.get(namespaced_key))
     
-    # Create a fresh Redis client for write operations to ensure we connect to the master
+    # Create a fresh Redis client for write operations
     redis_client = create_redis_client()
     
     # Delete the key
@@ -136,7 +141,7 @@ def delete_item(key: str, user=Depends(get_current_active_user)):
         "tenant_id": tenant_id,
     })
     
-    # Create a fresh Redis client for logs to ensure we connect to the master
+    # Create a fresh Redis client for logs
     logs_client = create_redis_client(db=1)
     logs_client.lpush("logs:audit", logs_entry)
     

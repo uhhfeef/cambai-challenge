@@ -21,7 +21,7 @@ LOKI_URL = f'http://{LOKI_HOST}:{LOKI_PORT}/loki/api/v1/push'
 
 @huey.task()
 def audit_log_expiration(key: str, tenant_id: str):
-    # Create a fresh Redis client for logs to ensure we connect to the master
+    # Create a fresh Redis client 
     logs_client = create_redis_client(db=1)
     
     # Log the key expiration
@@ -42,7 +42,7 @@ def offload_audit_logs_to_loki():
     print("Starting log offloading to Loki...")
     print(f"Loki URL: {LOKI_URL}")
     
-    # Create a fresh Redis client for logs to ensure we connect to the master
+    # Create a fresh Redis client for logs
     logs_client = create_redis_client(db=1)
     
     logs_count = logs_client.llen('logs:audit')
