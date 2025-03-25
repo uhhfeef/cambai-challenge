@@ -5,7 +5,7 @@
 set -e  # Exit on error
 
 # Configuration
-SERVICE_URL="http://127.0.0.1:54120"
+SERVICE_URL="http://127.0.0.1:57509"
 TEST_KEY="load-test-key-$(date +%s)"  # Use timestamp for unique key
 REQUEST_COUNT=1000
 CONCURRENCY=50

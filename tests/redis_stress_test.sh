@@ -5,7 +5,7 @@
 set -e  # Exit on error
 
 # Configuration
-SERVICE_URL="http://127.0.0.1:54120"
+SERVICE_URL="http://127.0.0.1:57509"
 BASE_KEY="redis-stress"
 TOKEN_FILE="access_token.txt"
 
