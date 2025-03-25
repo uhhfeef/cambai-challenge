@@ -21,6 +21,9 @@ LOKI_URL = f'http://{LOKI_HOST}:{LOKI_PORT}/loki/api/v1/push'
 
 @huey.task()
 def audit_log_expiration(key: str, tenant_id: str):
+    # Create a fresh Redis client for logs to ensure we connect to the master
+    logs_client = create_redis_client(db=1)
+    
     # Log the key expiration
     logs_entry = json.dumps({
         "timestamp": datetime.now().isoformat(),
@@ -28,7 +31,7 @@ def audit_log_expiration(key: str, tenant_id: str):
         "key": key,
         "tenant_id": tenant_id,
     })
-    logs_redis.lpush("logs:audit", logs_entry)
+    logs_client.lpush("logs:audit", logs_entry)
     
     print(f"Audit Log: Key '{tenant_id}:{key}' has expired.")
 
@@ -39,12 +42,15 @@ def offload_audit_logs_to_loki():
     print("Starting log offloading to Loki...")
     print(f"Loki URL: {LOKI_URL}")
     
-    logs_count = logs_redis.llen('logs:audit')
+    # Create a fresh Redis client for logs to ensure we connect to the master
+    logs_client = create_redis_client(db=1)
+    
+    logs_count = logs_client.llen('logs:audit')
     print(f"Found {logs_count} logs in Redis queue")
     
     logs = []
     while True:
-        log_data = logs_redis.rpop('logs:audit')
+        log_data = logs_client.rpop('logs:audit')
         if log_data is None:
             break
         try:

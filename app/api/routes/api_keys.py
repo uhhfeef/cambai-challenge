@@ -8,6 +8,7 @@ from app.core.security import get_current_active_user
 from app.models.user import User
 from app.models.api_key import APIKey, APIKeyCreate
 from app.db.redis import main_redis, logs_redis, get_api_keys_for_tenant
+from app.db.redis_utils import create_redis_client
 
 router = APIRouter()
 
@@ -20,8 +21,11 @@ async def create_api_key(key_data: APIKeyCreate, current_user: Annotated[User, D
     key_id = f"key_{uuid.uuid4().hex[:8]}"
     key_value = f"sk_{'test' if current_user.tenant_id == 'tenant1' else 'prod'}_{uuid.uuid4().hex}"
     
+    # Create a fresh Redis client for read/write operations
+    redis_client = create_redis_client()
+    
     # Get current API keys
-    api_keys_data = json.loads(main_redis.get("fake_api_keys_db"))
+    api_keys_data = json.loads(redis_client.get("fake_api_keys_db"))
     
     # Create new API key
     api_key = {
@@ -33,9 +37,12 @@ async def create_api_key(key_data: APIKeyCreate, current_user: Annotated[User, D
         "tenant_id": current_user.tenant_id,
     }
     
-    # Add to database
+    # Add to database using the fresh Redis client
     api_keys_data[key_id] = api_key
-    main_redis.set("fake_api_keys_db", json.dumps(api_keys_data))
+    redis_client.set("fake_api_keys_db", json.dumps(api_keys_data))
+    
+    # Create a fresh Redis client for logs
+    logs_client = create_redis_client(db=1)
     
     # Log the creation
     logs_entry = json.dumps({
@@ -45,7 +52,7 @@ async def create_api_key(key_data: APIKeyCreate, current_user: Annotated[User, D
         "tenant_id": current_user.tenant_id,
         "username": current_user.username,
     })
-    logs_redis.lpush("logs:audit", logs_entry)
+    logs_client.lpush("logs:audit", logs_entry)
     
     # Return without tenant_id in the response
     return APIKey(**{k: v for k, v in api_key.items() if k != "tenant_id"})

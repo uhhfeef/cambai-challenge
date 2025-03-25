@@ -6,6 +6,7 @@ from typing import Dict, Any
 from app.core.security import get_current_active_user
 from app.models.data import KeyValueItem
 from app.db.redis import main_redis, logs_redis, get_namespaced_key
+from app.db.redis_utils import create_redis_client
 
 router = APIRouter()
 
@@ -19,13 +20,16 @@ def create_item(item: KeyValueItem, key: str, user=Depends(get_current_active_us
     if main_redis.exists(namespaced_key):
         raise HTTPException(status_code=400, detail="Key already exists")
     
+    # Create a fresh Redis client for write operations to ensure we connect to the master
+    redis_client = create_redis_client()
+    
     # Save the full data (value and metadata) as JSON
     data = item.model_dump()
-    main_redis.set(namespaced_key, json.dumps(data))
+    redis_client.set(namespaced_key, json.dumps(data))
     
     # Set TTL if provided
     if item.ttl:
-        main_redis.expire(namespaced_key, item.ttl)
+        redis_client.expire(namespaced_key, item.ttl)
     
     # Log the key creation
     logs_entry = json.dumps({
@@ -37,7 +41,10 @@ def create_item(item: KeyValueItem, key: str, user=Depends(get_current_active_us
         "metadata": item.metadata,
         "tenant_id": tenant_id,
     })
-    logs_redis.lpush("logs:audit", logs_entry)
+    
+    # Create a fresh Redis client for logs to ensure we connect to the master
+    logs_client = create_redis_client(db=1)
+    logs_client.lpush("logs:audit", logs_entry)
     
     return {"status": "success", "key": key}
 
@@ -59,7 +66,10 @@ def get_item(key: str, user=Depends(get_current_active_user)):
         "metadata": json.loads(data)["metadata"],
         "tenant_id": tenant_id,
     })
-    logs_redis.lpush("logs:audit", logs_entry)
+    
+    # Create a fresh Redis client for logs to ensure we connect to the master
+    logs_client = create_redis_client(db=1)
+    logs_client.lpush("logs:audit", logs_entry)
     
     return json.loads(data)
 
@@ -71,13 +81,16 @@ def update_item(key: str, item: KeyValueItem, user=Depends(get_current_active_us
     if not main_redis.exists(namespaced_key):
         raise HTTPException(status_code=404, detail="Key not found")
     
+    # Create a fresh Redis client for write operations to ensure we connect to the master
+    redis_client = create_redis_client()
+    
     # Save the full data (value and metadata) as JSON
     data = item.model_dump()
-    main_redis.set(namespaced_key, json.dumps(data))
+    redis_client.set(namespaced_key, json.dumps(data))
     
     # Set or update TTL if provided
     if item.ttl:
-        main_redis.expire(namespaced_key, item.ttl)
+        redis_client.expire(namespaced_key, item.ttl)
     
     # Log the key update
     logs_entry = json.dumps({
@@ -89,7 +102,10 @@ def update_item(key: str, item: KeyValueItem, user=Depends(get_current_active_us
         "metadata": item.metadata,
         "tenant_id": tenant_id,
     })
-    logs_redis.lpush("logs:audit", logs_entry)
+    
+    # Create a fresh Redis client for logs to ensure we connect to the master
+    logs_client = create_redis_client(db=1)
+    logs_client.lpush("logs:audit", logs_entry)
     
     return {"status": "success", "key": key}
 
@@ -104,7 +120,11 @@ def delete_item(key: str, user=Depends(get_current_active_user)):
     # Get the data before deleting for logging
     data = json.loads(main_redis.get(namespaced_key))
     
-    main_redis.delete(namespaced_key)
+    # Create a fresh Redis client for write operations to ensure we connect to the master
+    redis_client = create_redis_client()
+    
+    # Delete the key
+    redis_client.delete(namespaced_key)
     
     # Log the key deletion
     logs_entry = json.dumps({
@@ -115,6 +135,9 @@ def delete_item(key: str, user=Depends(get_current_active_user)):
         "metadata": data["metadata"],
         "tenant_id": tenant_id,
     })
-    logs_redis.lpush("logs:audit", logs_entry)
+    
+    # Create a fresh Redis client for logs to ensure we connect to the master
+    logs_client = create_redis_client(db=1)
+    logs_client.lpush("logs:audit", logs_entry)
     
     return {"status": "success", "key": key}

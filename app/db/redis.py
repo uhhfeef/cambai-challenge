@@ -97,6 +97,7 @@ def init_redis_db():
     return r
 
 def get_user(redis_client, username: str) -> Optional[User]:
+
     users_data = json.loads(redis_client.get("fake_users_db"))
     user_data = users_data.get(username)
     if user_data:
@@ -104,7 +105,10 @@ def get_user(redis_client, username: str) -> Optional[User]:
     return None
 
 def get_api_keys_for_tenant(tenant_id: str) -> List[APIKey]:
-    api_keys_data = json.loads(main_redis.get("fake_api_keys_db"))
+    # Create a fresh Redis client for read operations
+    redis_client = create_redis_client()
+    
+    api_keys_data = json.loads(redis_client.get("fake_api_keys_db"))
     tenant_keys = []
     
     for key_id, key_data in api_keys_data.items():
